@@ -309,7 +309,7 @@ ifndef CONFIG_L2_PACKET
 CONFIG_L2_PACKET=linux
 endif
 
-OBJS_l2 += src/l2_packet/l2_packet_$(CONFIG_L2_PACKET).c
+OBJS_l2 := src/l2_packet/l2_packet_$(CONFIG_L2_PACKET).c
 
 ifeq ($(CONFIG_L2_PACKET), pcap)
 ifdef CONFIG_WINPCAP
@@ -1546,14 +1546,14 @@ endif
 
 ########################
 
-include $(CLEAR_VARS)
-LOCAL_MODULE := wpa_cli
-LOCAL_MODULE_TAGS := debug
-LOCAL_SHARED_LIBRARIES := libc libcutils liblog
-LOCAL_CFLAGS := $(L_CFLAGS)
-LOCAL_SRC_FILES := $(OBJS_c)
-LOCAL_C_INCLUDES := $(INCLUDES)
-include $(BUILD_EXECUTABLE)
+#include $(CLEAR_VARS)
+#LOCAL_MODULE := wpa_cli
+#LOCAL_MODULE_TAGS := debug
+#LOCAL_SHARED_LIBRARIES := libc libcutils liblog
+#LOCAL_CFLAGS := $(L_CFLAGS)
+#LOCAL_SRC_FILES := $(OBJS_c)
+#LOCAL_C_INCLUDES := $(INCLUDES)
+#include $(BUILD_EXECUTABLE)
 
 ########################
 include $(CLEAR_VARS)
@@ -1610,13 +1610,13 @@ include $(BUILD_EXECUTABLE)
 #
 ########################
 
-include $(CLEAR_VARS)
-LOCAL_MODULE = libwpa_client
-LOCAL_CFLAGS = $(L_CFLAGS)
-LOCAL_SRC_FILES = src/common/wpa_ctrl.c src/utils/os_$(CONFIG_OS).c
-LOCAL_C_INCLUDES = $(INCLUDES)
-LOCAL_SHARED_LIBRARIES := libcutils liblog
-LOCAL_COPY_HEADERS_TO := libwpa_client
-LOCAL_COPY_HEADERS := src/common/wpa_ctrl.h
-LOCAL_COPY_HEADERS += src/common/qca-vendor.h
-include $(BUILD_SHARED_LIBRARY)
+#include $(CLEAR_VARS)
+#LOCAL_MODULE = libwpa_client
+#LOCAL_CFLAGS = $(L_CFLAGS)
+#LOCAL_SRC_FILES = src/common/wpa_ctrl.c src/utils/os_$(CONFIG_OS).c
+#LOCAL_C_INCLUDES = $(INCLUDES)
+#LOCAL_SHARED_LIBRARIES := libcutils liblog
+#LOCAL_COPY_HEADERS_TO := libwpa_client
+#LOCAL_COPY_HEADERS := src/common/wpa_ctrl.h
+#LOCAL_COPY_HEADERS += src/common/qca-vendor.h
+#include $(BUILD_SHARED_LIBRARY)
