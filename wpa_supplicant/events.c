@@ -2077,6 +2077,9 @@ static int disconnect_reason_recoverable(u16 reason_code)
 		reason_code == WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA;
 }
 
+#ifdef WIFI_EAGLE
+extern u8 gl_var_bssid[ETH_ALEN];
+#endif
 
 static void wpa_supplicant_event_disassoc(struct wpa_supplicant *wpa_s,
 					  u16 reason_code,
@@ -2181,9 +2184,13 @@ static void wpa_supplicant_event_disassoc_finish(struct wpa_supplicant *wpa_s,
 			 */
 			fast_reconnect = wpa_s->current_bss;
 			fast_reconnect_ssid = wpa_s->current_ssid;
-		} else if (wpa_s->wpa_state >= WPA_ASSOCIATING)
+		} else if (wpa_s->wpa_state >= WPA_ASSOCIATING){
+#ifdef WIFI_EAGLE
+		/* ap_cache */
+		os_memcpy(gl_var_bssid, wpa_s->bssid, ETH_ALEN);
+#endif
 			wpa_supplicant_req_scan(wpa_s, 0, 100000);
-		else
+		}else
 			wpa_dbg(wpa_s, MSG_DEBUG, "Do not request new "
 				"immediate scan");
 	} else {
@@ -2998,10 +3005,10 @@ void wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 			wpa_s->own_scan_running = 1;
 			if (wpa_s->last_scan_req == MANUAL_SCAN_REQ &&
 			    wpa_s->manual_scan_use_id) {
-				wpa_msg(wpa_s, MSG_DEBUG, WPA_EVENT_SCAN_STARTED "id=%u",
+				wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED "id=%u",
 					wpa_s->manual_scan_id);
 			} else {
-				wpa_msg(wpa_s, MSG_DEBUG, WPA_EVENT_SCAN_STARTED);
+				wpa_msg(wpa_s, MSG_INFO, WPA_EVENT_SCAN_STARTED);
 			}
 		} else {
 			wpa_dbg(wpa_s, MSG_DEBUG, "External program started a scan");

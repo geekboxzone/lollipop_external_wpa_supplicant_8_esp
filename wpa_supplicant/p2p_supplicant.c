@@ -4113,6 +4113,9 @@ static void wpas_p2p_deinit_global(struct wpa_global *global)
 
 static int wpas_p2p_create_iface(struct wpa_supplicant *wpa_s)
 {
+#ifdef WIFI_EAGLE
+	return 0;
+#endif
 	if (!(wpa_s->drv_flags & WPA_DRIVER_FLAGS_DEDICATED_P2P_DEVICE) &&
 	    wpa_s->conf->p2p_no_group_iface)
 		return 0; /* separate interface disabled per configuration */
@@ -4721,12 +4724,12 @@ static int wpas_p2p_setup_freqs(struct wpa_supplicant *wpa_s, int freq,
 
 	/* We have a candidate frequency to use */
 	if (best_freq > 0) {
-		/*if (*pref_freq == 0 && num_unused > 0) {
+		if (*pref_freq == 0 && num_unused > 0) {
 			wpa_printf(MSG_DEBUG, "P2P: Try to prefer a frequency (%u MHz) we are already using",
 				   best_freq);
 			*pref_freq = best_freq;
-		} else*/ {
-			wpa_printf(MSG_INFO, "P2P: Try to force us to use frequency (%u MHz) which is already in use",
+		} else {
+			wpa_printf(MSG_DEBUG, "P2P: Try to force us to use frequency (%u MHz) which is already in use",
 				   best_freq);
 			*force_freq = best_freq;
 		}

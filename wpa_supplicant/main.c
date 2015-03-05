@@ -16,6 +16,15 @@
 #include "driver_i.h"
 #include "p2p_supplicant.h"
 
+#ifdef WIFI_EAGLE
+#define ESP_VERSION "FOR ROCK CHIP [V1.3.0]"
+#define RSSI_FILTER_CONF "/system/bin/rssi_filter.conf"
+#define RSSI_LEVEL_SLOW "slow"
+#define RSSI_LEVEL_NORMAL "normal"
+#define RSSI_LEVEL_FAST   "fast"
+#define RSSI_LEVEL_DISABLE "disable"
+extern int gl_rssi_filter_level;
+#endif
 
 static void usage(void)
 {
@@ -159,7 +168,28 @@ int main(int argc, char *argv[])
 	int iface_count, exitcode = -1;
 	struct wpa_params params;
 	struct wpa_global *global;
-
+#ifdef WIFI_EAGLE
+	FILE *frssi_conf;
+	char rssi_filter_val[16];
+	
+	gl_rssi_filter_level = 2;
+	if ((frssi_conf = fopen(RSSI_FILTER_CONF, "r")) == NULL)
+		wpa_printf(MSG_DEBUG, "%s open [%s] failed", __func__, RSSI_FILTER_CONF);
+	else {
+		if ((fgets(rssi_filter_val, 16, frssi_conf))) {
+			wpa_printf(MSG_DEBUG, "%s rssi_filter_content[%s]", RSSI_FILTER_CONF, rssi_filter_val);
+			if (!strncmp(rssi_filter_val, RSSI_LEVEL_DISABLE, strlen(RSSI_LEVEL_DISABLE)))
+				gl_rssi_filter_level = 0;
+			else if (!strncmp(rssi_filter_val, RSSI_LEVEL_FAST, strlen(RSSI_LEVEL_FAST)))
+				gl_rssi_filter_level = 1;
+			else if (!strncmp(rssi_filter_val, RSSI_LEVEL_NORMAL, strlen(RSSI_LEVEL_NORMAL)))
+				gl_rssi_filter_level = 2;
+			else if (!strncmp(rssi_filter_val, RSSI_LEVEL_SLOW, strlen(RSSI_LEVEL_SLOW)))
+				gl_rssi_filter_level = 3;
+		}
+		fclose(frssi_conf);
+	}
+#endif
 	if (os_program_init())
 		return -1;
 

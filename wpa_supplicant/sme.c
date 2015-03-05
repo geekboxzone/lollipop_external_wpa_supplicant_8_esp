@@ -29,6 +29,10 @@
 #include "sme.h"
 #include "hs20_supplicant.h"
 
+#if defined(ANDROID_P2P) && defined(WIFI_EAGLE)
+#include "common/wpa_ctrl.h"
+#endif /* ANDROID_P2P && WIFI_EAGLE */
+
 #define SME_AUTH_TIMEOUT 5
 #define SME_ASSOC_TIMEOUT 5
 
@@ -153,6 +157,10 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	struct wpabuf *resp = NULL;
 	u8 ext_capab[18];
 	int ext_capab_len;
+
+#if defined(ANDROID_P2P) && defined(WIFI_EAGLE)
+        int freq = 0;   
+#endif /* ANDROID_P2P && WIFI_EAGLE */
 
 	if (bss == NULL) {
 		wpa_msg(wpa_s, MSG_ERROR, "SME: No scan result available for "
@@ -449,7 +457,25 @@ static void sme_send_authentication(struct wpa_supplicant *wpa_s,
 	}
 #endif /* CONFIG_P2P */
 
+
+
 	wpa_s->sme.auth_alg = params.auth_alg;
+
+#if defined(ANDROID_P2P) && defined(WIFI_EAGLE)
+	/* If multichannel concurrency is not supported, check for any frequency
+	 * conflict and take appropriate action.
+	 */
+	wpa_printf(MSG_DEBUG, "%s EAGLE: Priority choose", __func__);
+
+	if ((wpa_s->num_multichan_concurrent < 2) &&
+		((freq = wpa_drv_shared_freq(wpa_s)) > 0) && (freq != params.freq)) {
+		wpa_printf(MSG_DEBUG, "Shared interface with conflicting frequency found (%d != %d)"
+																, freq, params.freq);
+		if (wpas_p2p_handle_frequency_conflicts(wpa_s, params.freq, ssid) < 0) 
+			return;
+	}
+#endif /* ANDROID_P2P && WIFI_EAGLE */
+
 	if (wpa_drv_authenticate(wpa_s, &params) < 0) {
 		wpa_msg(wpa_s, MSG_INFO, "SME: Authentication request to the "
 			"driver failed");

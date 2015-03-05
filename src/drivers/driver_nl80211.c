@@ -40,6 +40,11 @@
 #include "rfkill.h"
 #include "driver.h"
 
+#ifdef WIFI_EAGLE
+#include <time.h>
+#include <stdbool.h>
+#endif
+
 #ifndef SO_WIFI_STATUS
 # if defined(__sparc__)
 #  define SO_WIFI_STATUS	0x0025
@@ -5070,6 +5075,7 @@ static int wpa_driver_nl80211_scan(struct i802_bss *bss,
 
 		wpa_printf(MSG_DEBUG, "nl80211: P2P probe - mask SuppRates");
 
+#ifndef WIFI_EAGLE
 		rates = nla_nest_start(msg, NL80211_ATTR_SCAN_SUPP_RATES);
 		if (rates == NULL)
 			goto nla_put_failure;
@@ -5085,6 +5091,9 @@ static int wpa_driver_nl80211_scan(struct i802_bss *bss,
 		nla_nest_end(msg, rates);
 
 		NLA_PUT_FLAG(msg, NL80211_ATTR_TX_NO_CCK_RATE);
+#else
+		nl80211_disable_11b_rates(drv, drv->ifindex, 1);
+#endif
 	}
 
 	ret = send_and_recv_msgs(drv, msg, NULL, NULL);
@@ -5607,7 +5616,361 @@ nla_put_failure:
 	return NULL;
 }
 
+#ifdef WIFI_EAGLE
+#define IGNORE_TIME 10
+#define TIME_LIMIT 20 
+#define COUNT_LIMIT_LARGE 5
+#define COUNT_LIMIT_SMALL 3
+#define RSSI_ALGORITHM_PARAM 2
+#define RSSI_ALGORITHM_TRIVIAL_FAST_PARAM 4
+#define RSSI_ALGORITHM_TRIVIAL_NORMAL_PARAM 8
+#define RSSI_ALGORITHM_TRIVIAL_SLOW_PARAM 16
 
+int gl_rssi_filter_level = 2;
+u8 gl_var_bssid[ETH_ALEN] = {0};
+u8 gl_var_ssid[64] = {0};
+size_t gl_var_ssid_len = 0;
+
+struct cache_wpa_scan_res {
+	struct wpa_scan_res *res;
+
+	time_t alive_timer;
+	u16 undetected_count;
+
+	time_t max_rssi_timer;
+	u32 appear_count;
+	int max_level;
+};
+
+struct cache_wpa_scan_results {
+	struct cache_wpa_scan_res **res;
+	size_t num;
+};
+
+static struct cache_wpa_scan_results *res_cache = NULL;
+
+static const u8 * wpa_scan_get_ie(const struct wpa_scan_res *res, u8 ie)
+{
+	const u8 *end, *pos;
+
+	pos = (const u8 *) (res + 1);
+	end = pos + res->ie_len;
+
+	while (pos + 1 < end) {
+		if (pos + 2 + pos[1] > end)
+			break;
+		if (pos[0] == ie)
+			return pos;
+		pos += 2 + pos[1];
+	}
+
+	return NULL;
+}
+
+void deep_cpy_res (struct wpa_scan_res *target, struct wpa_scan_res *ori)
+{
+	size_t i;
+
+	u8 *pos_target;
+	u8 *pos_ori;
+
+	target->flags 		= ori->flags;
+
+        os_memcpy(target->bssid, ori->bssid, ETH_ALEN);
+
+	target->freq 		= ori->freq;
+	target->beacon_int 	= ori->beacon_int;
+	target->caps 		= ori->caps;
+	target->qual 		= ori->qual;
+	target->noise		= ori->noise;
+	target->level		= ori->level;
+	target->tsf		= ori->tsf;
+	target->age		= ori->age;
+
+	target->ie_len		= ori->ie_len;
+	target->beacon_ie_len	= ori->beacon_ie_len;
+
+	pos_target = (u8 *)(target + 1);
+	pos_ori = (u8 *)(ori + 1);
+
+	if ( target->ie_len != 0 ) {
+		wpa_printf(MSG_DEBUG, "ie_len is %d", target->ie_len);
+		os_memcpy(pos_target, pos_ori, target->ie_len);
+		pos_target += target->ie_len;
+		pos_ori += target->ie_len;
+	}
+	else
+		wpa_printf(MSG_DEBUG, "ATTENTION: ie is empty");
+
+	if( target->beacon_ie_len != 0 ) {
+		wpa_printf(MSG_DEBUG, "beacon_ie_len is %d", target->beacon_ie_len);
+		os_memcpy(pos_target, pos_ori, target->beacon_ie_len);
+	}	
+	else
+		wpa_printf(MSG_DEBUG, "ATTENTION: beacon_ie is empty");
+}
+
+void update_res_cache(struct wpa_scan_res *res)
+{
+	size_t i;
+	struct cache_wpa_scan_res * c_r;
+	struct cache_wpa_scan_res **tmp;
+	u8 bssid[ETH_ALEN];
+	bool exist = false;
+	const u8 *ssid;
+
+	int level = res->level;
+	int cached_ap_level;
+	int count;
+
+	for(i = 0; i < ETH_ALEN; i++) {
+		bssid[i] = (res->bssid)[i];
+	}
+	
+	wpa_printf(MSG_DEBUG, "bssid is " MACSTR, MAC2STR(res->bssid));
+	
+	for(i = 0; i < res_cache->num; i++) {
+		//wpa_printf(MSG_DEBUG, "check %d times", i);
+		if ( res_cache->res[i] && !os_memcmp(bssid, res_cache->res[i]->res->bssid, ETH_ALEN)) {
+			wpa_printf(MSG_DEBUG, "bssid exists");
+			exist = true;
+			res_cache->res[i]->alive_timer = time(NULL);
+
+			cached_ap_level = res_cache->res[i]->res->level;
+
+			os_free(res_cache->res[i]->res);
+
+			size_t ie_len = res->ie_len;
+			size_t beacon_ie_len = res->beacon_ie_len;
+			res_cache->res[i]->res = os_zalloc( sizeof(*( res_cache->res[i]->res )) + ie_len + beacon_ie_len);
+			deep_cpy_res(res_cache->res[i]->res, res);
+
+			wpa_printf(MSG_DEBUG, "gl_rssi_filter_level[%d]", gl_rssi_filter_level);
+			switch (gl_rssi_filter_level) {
+				case 0:
+					/* do nothing */
+					break;
+				case 1:
+					if (level > cached_ap_level)
+						res->level = ( cached_ap_level * (RSSI_ALGORITHM_PARAM - 1) + level ) / RSSI_ALGORITHM_PARAM;
+					else
+						res->level = ( cached_ap_level * (RSSI_ALGORITHM_TRIVIAL_FAST_PARAM - 1) + level ) / RSSI_ALGORITHM_TRIVIAL_FAST_PARAM;
+
+					break;
+				case 2:
+					if (level > cached_ap_level)
+						res->level = ( cached_ap_level * (RSSI_ALGORITHM_PARAM - 1) + level ) / RSSI_ALGORITHM_PARAM;
+					else
+						res->level = ( cached_ap_level * (RSSI_ALGORITHM_TRIVIAL_NORMAL_PARAM - 1) + level ) / RSSI_ALGORITHM_TRIVIAL_NORMAL_PARAM;
+					break;
+				case 3:
+					if (level > cached_ap_level)
+						res->level = ( cached_ap_level * (RSSI_ALGORITHM_PARAM - 1) + level ) / RSSI_ALGORITHM_PARAM;
+					else
+						res->level = ( cached_ap_level * (RSSI_ALGORITHM_TRIVIAL_SLOW_PARAM - 1) + level ) / RSSI_ALGORITHM_TRIVIAL_SLOW_PARAM;
+					break;
+				default:
+					break;
+			}
+
+			res_cache->res[i]->res->level = res->level;
+
+			break;
+		}
+
+	}
+
+	if (!exist) {
+		c_r = os_zalloc( sizeof(*c_r) );	
+		size_t ie_len = res->ie_len;
+		size_t beacon_ie_len = res->beacon_ie_len;
+		c_r->res = os_zalloc( sizeof(*(c_r->res)) + ie_len + beacon_ie_len);
+
+		deep_cpy_res(c_r->res, res);
+
+		c_r->alive_timer = time(NULL);
+		c_r->appear_count = 1;
+
+		bool spare_space_used = false;
+
+		for( i = 0; i < res_cache->num; i++ ) {
+			if ( !(res_cache->res[i]) ) {
+				wpa_printf(MSG_DEBUG, "rdy to use spare space");
+				res_cache->res[i] = c_r;
+				spare_space_used = true;
+				break;
+			}
+		}
+		
+		if (!spare_space_used) {
+
+			tmp = os_realloc(res_cache->res, (res_cache->num + 1) * sizeof(struct cache_wpa_scan_res *)); 
+			if(!tmp) {
+				wpa_printf(MSG_ERROR, "os_realloc fail on tmp");
+				os_free(c_r);
+				return;
+			}
+
+			tmp[res_cache->num++] = c_r;
+
+			res_cache->res = tmp;	
+		}	
+	}
+}
+
+static void maintain_res_cache(size_t *actual_num)
+{
+	size_t i;
+
+	time_t current_t = time(NULL);
+
+	for( i = 0; i < res_cache->num; i++ ) {
+
+		if (!(res_cache->res[i])) {
+			(*actual_num)--;
+			wpa_printf(MSG_DEBUG, "actual_num turns to %d, A", *actual_num);
+			continue;
+		}
+	
+		if( (current_t - res_cache->res[i]->alive_timer) != 0 ) {
+			res_cache->res[i]->undetected_count++;
+			wpa_printf( MSG_DEBUG, "undetected this time, res_cache->res[%d]->undetected_count: %d", i, res_cache->res[i]->undetected_count );
+		}
+		else {
+			wpa_printf( MSG_DEBUG, "detected, counter reset" );
+			res_cache->res[i]->undetected_count = 0;
+		}
+
+		if ( ((current_t - res_cache->res[i]->alive_timer >= TIME_LIMIT) && (res_cache->res[i]->undetected_count > COUNT_LIMIT_SMALL)) ||
+                                ((current_t - res_cache->res[i]->alive_timer >= IGNORE_TIME) && (res_cache->res[i]->undetected_count > COUNT_LIMIT_LARGE)) ) {
+			wpa_printf(MSG_ERROR, "%d seconds unrespond, timeout, undetected for %d times, current record cleared", 
+										(int)(current_t - res_cache->res[i]->alive_timer),
+										res_cache->res[i]->undetected_count);
+			os_free(res_cache->res[i]->res);
+			os_free(res_cache->res[i]);
+			res_cache->res[i] = NULL;				
+			(*actual_num)--;
+		}
+		else {
+			wpa_printf(MSG_DEBUG, "bssid is " MACSTR, MAC2STR(res_cache->res[i]->res->bssid));
+
+			if (gl_var_ssid_len != 0) {
+				wpa_printf(MSG_DEBUG, "gl_var_ssid is %s", gl_var_ssid);
+			}
+
+			const u8 *ssid_;
+			size_t ssid_len;
+			const u8 *ie;
+			
+			u8 ssid[64] = {0};
+
+			ie = wpa_scan_get_ie(res_cache->res[i]->res, WLAN_EID_SSID);
+			ssid_ = ie ? ie + 2 : (u8 *) "";
+			ssid_len = ie ? ie[1] : 0;
+
+			os_memcpy(ssid, ssid_, ssid_len);
+
+			wpa_printf(MSG_DEBUG, "ssid is %s", ssid);
+
+			if (!os_memcmp(res_cache->res[i]->res->bssid, gl_var_bssid, ETH_ALEN) || 
+                            ( gl_var_ssid_len != 0 && (ssid_len == gl_var_ssid_len) && !os_memcmp(gl_var_ssid, ssid, ssid_len) ) ) 
+			{
+				//wpa_printf(MSG_ERROR, "bssid: " MACSTR " tested before connection\n", MAC2STR(res_cache->res[i]->res->bssid));
+				wpa_printf(MSG_ERROR, "current ap being tested before connection");
+				if ( current_t != res_cache->res[i]->alive_timer ) {
+					wpa_printf(MSG_ERROR, "and the deattached ap is not detected, removing from cache ...\n");
+
+					os_free(res_cache->res[i]->res);
+					os_free(res_cache->res[i]);
+					res_cache->res[i] = NULL;
+					
+					(*actual_num)--;
+	
+                                        os_memset(gl_var_bssid, 0, ETH_ALEN);
+                                        os_memset(gl_var_ssid, 0, sizeof(gl_var_ssid));
+					gl_var_ssid_len = 0;
+				}
+			}			
+
+		}
+	}		
+
+	wpa_printf(MSG_DEBUG, "func %s ends\n", __func__);	
+}
+
+void cache_res_free(void)
+{
+	size_t i;
+
+	if (res_cache == NULL)
+		return;
+
+	for (i = 0; i < res_cache->num; i++) {
+		if ( !(res_cache->res[i]) ) 
+			continue;
+		os_free(res_cache->res[i]->res);
+		os_free(res_cache->res[i]);
+	}
+	os_free(res_cache->res);
+	os_free(res_cache);
+
+	res_cache = NULL;
+
+	wpa_printf(MSG_DEBUG, "res_cache is freed");
+}
+
+
+static void cache_fetch_scan_results(struct wpa_scan_results **rscan_res)
+{
+	size_t i;
+	size_t j;
+	size_t ie_len;
+	size_t beacon_ie_len;
+	size_t actual_num;	
+
+	if (!res_cache) {
+		wpa_printf(MSG_DEBUG, "initiate res_cache");
+		res_cache = os_zalloc(sizeof(*res_cache)); 
+		wpa_printf(MSG_DEBUG, "num %d\n", res_cache->num);
+	}
+
+	if (!(*rscan_res)) {
+		wpa_printf(MSG_ERROR, "scan_res is NULL");
+		return;
+	}
+
+	wpa_printf(MSG_DEBUG, "(*rscan_res)->num is %d", (*rscan_res)->num);
+	wpa_printf(MSG_DEBUG, "res_cache->num is %d", res_cache->num);
+
+	for (i = 0; i < (*rscan_res)->num; i++) {
+		wpa_printf(MSG_DEBUG, "round %d", i);
+		update_res_cache((*rscan_res)->res[i]);
+	}
+
+	actual_num = res_cache->num;
+
+	maintain_res_cache(&actual_num);		
+
+	wpa_scan_results_free(*rscan_res);
+	(*rscan_res) = os_zalloc(sizeof(**rscan_res));
+	(*rscan_res)->num = actual_num;
+
+	(*rscan_res)->res = os_zalloc(actual_num * (sizeof(struct wpa_scan_res *)));
+	
+	for (i = 0, j = 0; i < res_cache->num; i++) {
+		wpa_printf(MSG_DEBUG, "cache2scan_res, round %d", i);
+		if (res_cache->res[i])	{
+			ie_len = res_cache->res[i]->res->ie_len;
+			beacon_ie_len = res_cache->res[i]->res->beacon_ie_len;
+			(*rscan_res)->res[j] = os_zalloc( sizeof(*((*rscan_res)->res[j])) +  ie_len + beacon_ie_len);
+			deep_cpy_res((*rscan_res)->res[j], res_cache->res[i]->res);
+			j++;
+		}
+	}
+
+	wpa_printf(MSG_DEBUG, "cache_func end, actual_num is %d, j is %d, res_cache->num is %d", actual_num, j, res_cache->num);
+}
+#endif /* WIFI_EAGLE */
 /**
  * wpa_driver_nl80211_get_scan_results - Fetch the latest scan results
  * @priv: Pointer to private wext data from wpa_driver_nl80211_init()
@@ -5621,6 +5984,9 @@ wpa_driver_nl80211_get_scan_results(void *priv)
 	struct wpa_scan_results *res;
 
 	res = nl80211_get_scan_results(drv);
+#ifdef WIFI_EAGLE
+	cache_fetch_scan_results(&res);
+#endif
 	if (res)
 		wpa_driver_nl80211_check_bss_status(drv, res);
 	return res;
@@ -11715,7 +12081,11 @@ static int android_pno_start(struct i802_bss *bss,
 	priv_cmd.total_len = bp;
 	ifr.ifr_data = &priv_cmd;
 
+#ifdef WIFI_EAGLE
+	ret = 0;
+#else
 	ret = ioctl(drv->global->ioctl_sock, SIOCDEVPRIVATE + 1, &ifr);
+#endif /* WIFI_EAGLE*/
 
 	if (ret < 0) {
 		wpa_printf(MSG_ERROR, "ioctl[SIOCSIWPRIV] (pnosetup): %d",
