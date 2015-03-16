@@ -19,6 +19,7 @@
 static int p2p_go_det(u8 own_intent, u8 peer_value)
 {
 	u8 peer_intent = peer_value >> 1;
+        wpa_printf(MSG_ERROR, "own_intent = %d, peer_value = %d", own_intent, peer_intent);
 	if (own_intent == peer_intent) {
 		if (own_intent == P2P_MAX_GO_INTENT)
 			return -1; /* both devices want to become GO */
@@ -958,7 +959,10 @@ void p2p_process_go_neg_resp(struct p2p_data *p2p, const u8 *sa,
 			p2p_dbg(p2p, "Wait for the peer to become ready for GO Negotiation");
 			dev->flags |= P2P_DEV_NOT_YET_READY;
 			os_get_reltime(&dev->go_neg_wait_started);
-			p2p_set_state(p2p, P2P_WAIT_PEER_IDLE);
+			if (p2p->state == P2P_CONNECT_LISTEN)
+				p2p_set_state(p2p, P2P_WAIT_PEER_CONNECT);
+			else
+				p2p_set_state(p2p, P2P_WAIT_PEER_IDLE);
 			p2p_set_timeout(p2p, 0, 0);
 		} else {
 			p2p_dbg(p2p, "Stop GO Negotiation attempt");
