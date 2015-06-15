@@ -1216,7 +1216,7 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 	else
 		os_snprintf(tmp_name, tmp_len, "%s.tmp", name);
 
-	wpa_printf(MSG_DEBUG, "Writing configuration file '%s'", tmp_name);
+	wpa_printf(MSG_ERROR, "Writing configuration file '%s'", tmp_name);
 
 	f = fopen(tmp_name, "w");
 	if (f == NULL) {
@@ -1255,6 +1255,7 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 	}
 #endif /* CONFIG_NO_CONFIG_BLOBS */
 
+        fflush(f);
 	fclose(f);
 
 	if (tmp_name != name) {
