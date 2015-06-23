@@ -1207,7 +1207,7 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 #ifndef CONFIG_NO_CONFIG_BLOBS
 	struct wpa_config_blob *blob;
 #endif /* CONFIG_NO_CONFIG_BLOBS */
-	int ret = 0;
+	int ret = 0, fd;
 	int tmp_len = os_strlen(name) + 5;       /* allow space for .tmp suffix */
 	char *tmp_name = os_malloc(tmp_len);
 
@@ -1255,7 +1255,12 @@ int wpa_config_write(const char *name, struct wpa_config *config)
 	}
 #endif /* CONFIG_NO_CONFIG_BLOBS */
 
-        fflush(f);
+	fflush(f);
+	fd = fileno(f);
+	if (fd >= 0)
+		fsync(fd);
+	else
+		wpa_printf(MSG_ERROR, "fsync failed");
 	fclose(f);
 
 	if (tmp_name != name) {
